@@ -347,7 +347,6 @@
     <script>
         // Application state
         let isConnected = false;
-        let websocket = null;
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
@@ -362,6 +361,9 @@
         const messageLog = document.getElementById('messageLog');
         const messageInput = document.getElementById('messageInput');
         const recordingStatus = document.getElementById('recordingStatus');
+
+        // CORS Proxy to fix HTTPS to HTTP communication
+        const corsProxy = "https://corsproxy.io/?";
 
         // Initialize the app
         function init() {
@@ -423,20 +425,26 @@
             localStorage.setItem('esp_ip', ip);
             espBaseUrl = `http://${ip}`;
             
-            // Test connection
-            fetch(`${espBaseUrl}/get`)
-                .then(response => {
-                    if (response.ok) {
-                        isConnected = true;
-                        updateConnectionStatus(true, "Connected to ESP32");
-                        addMessage('System', 'Connected to ESP32. You can now send messages.', 'received');
-                    } else {
-                        throw new Error('Connection failed');
-                    }
-                })
-                .catch(error => {
-                    updateConnectionStatus(false, "Connection failed: " + error.message);
-                });
+            // Test connection through CORS proxy
+            fetch(corsProxy + espBaseUrl + "/get", {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    isConnected = true;
+                    updateConnectionStatus(true, "Connected to ESP32");
+                    addMessage('System', 'Connected to ESP32. You can now send messages.', 'received');
+                    return response.json();
+                }
+                throw new Error('Connection failed');
+            })
+            .catch(error => {
+                updateConnectionStatus(false, "Connection failed: " + error.message);
+                addMessage('System', 'Connection failed. Please check the IP address: ' + ip, 'received');
+            });
         }
 
         function disconnect() {
@@ -459,19 +467,31 @@
                 return;
             }
             
-            fetch(`${espBaseUrl}/send`, {
+            // Create form data
+            const formData = new URLSearchParams();
+            formData.append('message', text);
+            formData.append('language', myLanguage.value);
+            
+            // Send through CORS proxy
+            fetch(corsProxy + espBaseUrl + "/send", {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `message=${encodeURIComponent(text)}&language=${encodeURIComponent(myLanguage.value)}`
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: formData
             })
             .then(response => {
                 if (response.ok) {
                     addMessage('You', text, 'sent');
                     messageInput.value = '';
+                    return response.text();
                 }
+                throw new Error('Send failed');
             })
             .catch(error => {
-                alert("Failed to send message");
+                console.error('Send error:', error);
+                addMessage('System', 'Failed to send message. Connection lost?', 'received');
+                disconnect();
             });
         }
 
@@ -490,15 +510,25 @@
             
             const message = messages[action];
             if (message) {
-                fetch(`${espBaseUrl}/send`, {
+                const formData = new URLSearchParams();
+                formData.append('message', message);
+                formData.append('language', myLanguage.value);
+                
+                fetch(corsProxy + espBaseUrl + "/send", {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: `message=${encodeURIComponent(message)}&language=${encodeURIComponent(myLanguage.value)}`
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: formData
                 })
                 .then(response => {
                     if (response.ok) {
                         addMessage('You', message, 'sent');
                     }
+                })
+                .catch(error => {
+                    console.error('Quick action error:', error);
+                    disconnect();
                 });
             }
         }
@@ -564,13 +594,19 @@
         async function processRecording() {
             try {
                 // Simulate speech recognition (would use Web Speech API or external service)
-                const simulatedText = "This is a simulated voice message";
+                const simulatedText = "Hello, this is a voice message";
                 
-                // Send to ESP32
-                fetch(`${espBaseUrl}/send`, {
+                // Send through CORS proxy
+                const formData = new URLSearchParams();
+                formData.append('message', simulatedText);
+                formData.append('language', myLanguage.value);
+                
+                fetch(corsProxy + espBaseUrl + "/send", {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: `message=${encodeURIComponent(simulatedText)}&language=${encodeURIComponent(myLanguage.value)}`
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: formData
                 })
                 .then(response => {
                     if (response.ok) {
@@ -606,12 +642,15 @@
         // Check for new messages every 2 seconds
         setInterval(() => {
             if (isConnected) {
-                fetch(`${espBaseUrl}/get`)
+                fetch(corsProxy + espBaseUrl + "/get")
                     .then(response => response.json())
                     .then(data => {
                         if (data.message && data.message !== '') {
                             addMessage('Other', data.message, 'received');
                         }
+                    })
+                    .catch(error => {
+                        console.error('Fetch error:', error);
                     });
             }
         }, 2000);
