@@ -1,2 +1,0 @@
-# Translator
-Translate Voice
